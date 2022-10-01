@@ -2,8 +2,11 @@
 
 namespace Spatie\Permission\Test;
 
-use File;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Spatie\Permission\Contracts\Permission;
 use Spatie\Permission\Contracts\Role;
@@ -12,32 +15,48 @@ use Spatie\Permission\PermissionServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
-    /**
-     * @var \Spatie\Permission\Test\User
-     */
+    /** @var \Spatie\Permission\Test\User */
     protected $testUser;
 
-    /**
-     * @var \Spatie\Permission\Models\Role
-     */
-    protected $testRole;
+    /** @var \Spatie\Permission\Test\Admin */
+    protected $testAdmin;
 
-    /**
-     * @var \Spatie\Permission\Models\Permission
-     */
-    protected $testPermission;
+    /** @var \Spatie\Permission\Models\Role */
+    protected $testUserRole;
 
-    public function setUp()
+    /** @var \Spatie\Permission\Models\Role */
+    protected $testAdminRole;
+
+    /** @var \Spatie\Permission\Models\Permission */
+    protected $testUserPermission;
+
+    /** @var \Spatie\Permission\Models\Permission */
+    protected $testAdminPermission;
+
+    /** @var bool */
+    protected $useCustomModels = false;
+
+    /** @var bool */
+    protected $hasTeams = false;
+
+    protected static $migration;
+    protected static $customMigration;
+
+    public function setUp(): void
     {
         parent::setUp();
 
+        if (! self::$migration) {
+            $this->prepareMigration();
+        }
+
+        // Note: this also flushes the cache from within the migration
         $this->setUpDatabase($this->app);
+        if ($this->hasTeams) {
+            setPermissionsTeamId(1);
+        }
 
-        $this->reloadPermissions();
-
-        $this->testUser = User::first();
-        $this->testRole = app(Role::class)->first();
-        $this->testPermission = app(Permission::class)->find(1);
+        $this->setUpRoutes();
     }
 
     /**
@@ -59,16 +78,35 @@ abstract class TestCase extends Orchestra
      */
     protected function getEnvironmentSetUp($app)
     {
-        $this->initializeDirectory($this->getTempDirectory());
-
+        $app['config']->set('permission.register_permission_check_method', true);
+        $app['config']->set('permission.teams', $this->hasTeams);
+        $app['config']->set('permission.testing', true); //fix sqlite
+        $app['config']->set('permission.column_names.model_morph_key', 'model_test_id');
+        $app['config']->set('permission.column_names.team_foreign_key', 'team_test_id');
         $app['config']->set('database.default', 'sqlite');
         $app['config']->set('database.connections.sqlite', [
             'driver' => 'sqlite',
-            'database' => $this->getTempDirectory().'/database.sqlite',
+            'database' => ':memory:',
             'prefix' => '',
         ]);
-
+        $app['config']->set('permission.column_names.role_pivot_key', 'role_test_id');
+        $app['config']->set('permission.column_names.permission_pivot_key', 'permission_test_id');
         $app['config']->set('view.paths', [__DIR__.'/resources/views']);
+
+        // ensure api guard exists (required since Laravel 8.55)
+        $app['config']->set('auth.guards.api', ['driver' => 'session', 'provider' => 'users']);
+
+        // Set-up admin guard
+        $app['config']->set('auth.guards.admin', ['driver' => 'session', 'provider' => 'admins']);
+        $app['config']->set('auth.providers.admins', ['driver' => 'eloquent', 'model' => Admin::class]);
+        if ($this->useCustomModels) {
+            $app['config']->set('permission.models.permission', \Spatie\Permission\Test\Permission::class);
+            $app['config']->set('permission.models.role', \Spatie\Permission\Test\Role::class);
+        }
+        // Use test User model for users provider
+        $app['config']->set('auth.providers.users.model', User::class);
+
+        $app['config']->set('cache.prefix', 'spatie_tests---');
     }
 
     /**
@@ -78,65 +116,92 @@ abstract class TestCase extends Orchestra
      */
     protected function setUpDatabase($app)
     {
-        file_put_contents($this->getTempDirectory().'/database.sqlite', null);
-
         $app['db']->connection()->getSchemaBuilder()->create('users', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('email');
+            $table->softDeletes();
+        });
+
+        $app['db']->connection()->getSchemaBuilder()->create('admins', function (Blueprint $table) {
             $table->increments('id');
             $table->string('email');
         });
 
-        include_once '__DIR__'.'/../resources/migrations/create_permission_tables.php.stub';
+        if (Cache::getStore() instanceof \Illuminate\Cache\DatabaseStore ||
+            $app[PermissionRegistrar::class]->getCacheStore() instanceof \Illuminate\Cache\DatabaseStore) {
+            $this->createCacheTable();
+        }
 
-        (new \CreatePermissionTables())->up();
+        if (! $this->useCustomModels) {
+            self::$migration->up();
+        } else {
+            self::$customMigration->up();
+        }
 
-        User::create(['email' => 'test@user.com']);
-        $app[Role::class]->create(['name' => 'testRole']);
-        $app[Permission::class]->create(['name' => 'edit-articles']);
+        $this->testUser = User::create(['email' => 'test@user.com']);
+        $this->testAdmin = Admin::create(['email' => 'admin@user.com']);
+        $this->testUserRole = $app[Role::class]->create(['name' => 'testRole']);
+        $app[Role::class]->create(['name' => 'testRole2']);
+        $this->testAdminRole = $app[Role::class]->create(['name' => 'testAdminRole', 'guard_name' => 'admin']);
+        $this->testUserPermission = $app[Permission::class]->create(['name' => 'edit-articles']);
         $app[Permission::class]->create(['name' => 'edit-news']);
+        $app[Permission::class]->create(['name' => 'edit-blog']);
+        $this->testAdminPermission = $app[Permission::class]->create(['name' => 'admin-permission', 'guard_name' => 'admin']);
+        $app[Permission::class]->create(['name' => 'Edit News']);
     }
 
-    /**
-     * Initialize the directory.
-     *
-     * @param string $directory
-     */
-    protected function initializeDirectory($directory)
+    private function prepareMigration()
     {
-        if (File::isDirectory($directory)) {
-            File::deleteDirectory($directory);
-        }
-        if (!File::exists($directory)) {
-            File::makeDirectory($directory);
-        }
+        $migration = str_replace(
+            [
+                'CreatePermissionTables',
+                '(\'id\'); // permission id',
+                '(\'id\'); // role id',
+                'references(\'id\') // permission id',
+                'references(\'id\') // role id',
+            ],
+            [
+                'CreatePermissionCustomTables',
+                '(\'permission_test_id\');',
+                '(\'role_test_id\');',
+                'references(\'permission_test_id\')',
+                'references(\'role_test_id\')',
+            ],
+            file_get_contents(__DIR__.'/../database/migrations/create_permission_tables.php.stub')
+        );
+
+        file_put_contents(__DIR__.'/CreatePermissionCustomTables.php', $migration);
+
+        include_once __DIR__.'/../database/migrations/create_permission_tables.php.stub';
+        self::$migration = new \CreatePermissionTables();
+
+        include_once __DIR__.'/CreatePermissionCustomTables.php';
+        self::$customMigration = new \CreatePermissionCustomTables();
     }
 
-    /**
-     * Get the temporary directory.
-     *
-     * @param string $suffix
-     *
-     * @return string
-     */
-    public function getTempDirectory($suffix = '')
-    {
-        return __DIR__.'/temp'.($suffix == '' ? '' : '/'.$suffix);
-    }
-
-    /**
-     * Reload the permissions.
-     *
-     * @return bool
-     */
     protected function reloadPermissions()
     {
-        return app(PermissionRegistrar::class)->registerPermissions();
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+    }
+
+    public function createCacheTable()
+    {
+        Schema::create('cache', function ($table) {
+            $table->string('key')->unique();
+            $table->text('value');
+            $table->integer('expiration');
+        });
     }
 
     /**
-     * Refresh the testuser.
+     * Create routes to test authentication with guards.
      */
-    public function refreshTestUser()
+    public function setUpRoutes(): void
     {
-        $this->testUser = User::find($this->testUser->id);
+        Route::middleware('auth:api')->get('/check-api-guard-permission', function (Request $request) {
+            return [
+                 'status' => $request->user()->hasPermissionTo('do_that'),
+             ];
+        });
     }
 }

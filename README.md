@@ -1,388 +1,103 @@
-# Associate users with roles and permissions
+
+[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/support-ukraine.svg?t=1" />](https://supportukrainenow.org)
+
+<p align="center"><img src="/art/socialcard.png" alt="Social Card of Laravel Permission"></p>
+
+# Associate users with permissions and roles
+
+### Sponsor
+
+<table>
+   <tr>
+      <td><img src="https://user-images.githubusercontent.com/6287961/92889815-d64c3d80-f416-11ea-894a-b4de7e8f7eef.png"></td>
+      <td>If you want to quickly add authentication and authorization to Laravel projects, feel free to check Auth0's Laravel SDK and free plan at <a href="https://auth0.com/developers?utm_source=GHsponsor&utm_medium=GHsponsor&utm_campaign=laravel-permission&utm_content=auth">https://auth0.com/developers</a>.</td>
+   </tr>
+</table>
+
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/spatie/laravel-permission.svg?style=flat-square)](https://packagist.org/packages/spatie/laravel-permission)
-[![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)](LICENSE.md)
-[![Build Status](https://img.shields.io/travis/spatie/laravel-permission/master.svg?style=flat-square)](https://travis-ci.org/spatie/laravel-permission)
-[![SensioLabsInsight](https://img.shields.io/sensiolabs/i/a25f93ac-5e8f-48c8-a9a1-5d3ef3f9e8f2.svg?style=flat-square)](https://insight.sensiolabs.com/projects/a25f93ac-5e8f-48c8-a9a1-5d3ef3f9e8f2)
-[![Quality Score](https://img.shields.io/scrutinizer/g/spatie/laravel-permission.svg?style=flat-square)](https://scrutinizer-ci.com/g/spatie/laravel-permission)
+![](https://github.com/spatie/laravel-permission/workflows/Run%20Tests/badge.svg?branch=master)
 [![Total Downloads](https://img.shields.io/packagist/dt/spatie/laravel-permission.svg?style=flat-square)](https://packagist.org/packages/spatie/laravel-permission)
 
-This package allows to save permissions and roles in a database. It is built upon [Laravel's
-authorization functionality](http://laravel.com/docs/5.1/authorization) that
-was [introduced in version 5.1.11](http://christoph-rumpel.com/2015/09/new-acl-features-in-laravel/)
+## Documentation, Installation, and Usage Instructions
+
+See the [documentation](https://spatie.be/docs/laravel-permission/) for detailed installation and usage instructions.
+
+## What It Does
+This package allows you to manage user permissions and roles in a database.
 
 Once installed you can do stuff like this:
 
 ```php
-//adding permissions to a user
+// Adding permissions to a user
 $user->givePermissionTo('edit articles');
 
-//adding permissions via a role
+// Adding permissions via a role
 $user->assignRole('writer');
-$user2->assignRole('writer');
 
 $role->givePermissionTo('edit articles');
 ```
 
-You can test if a user has a permission with Laravel's default `can`-function.
+Because all permissions will be registered on [Laravel's gate](https://laravel.com/docs/authorization), you can check if a user has a permission with Laravel's default `can` function:
+
 ```php
 $user->can('edit articles');
 ```
 
-If you want a drop-in middleware to check permissions, check out our authorize package: https://github.com/spatie/laravel-authorize
+## Support us
 
-Spatie is webdesign agency in Antwerp, Belgium. You'll find an overview of all 
-our open source projects [on our website](https://spatie.be/opensource).
+[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/laravel-permission.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/laravel-permission)
 
-## Install
+We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
 
-You can install the package via composer:
+We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
+
+### Testing
+
 ``` bash
-$ composer require spatie/laravel-permission
+composer test
 ```
 
-This service provider must be installed.
-```php
-// config/app.php
-'providers' => [
-    ...
-    Spatie\Permission\PermissionServiceProvider::class,
-];
-```
-
-You can publish the migration with:
-```bash
-php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider" --tag="migrations"
-```
-
-The package assumes that your users table name is called "users". If this is not the case
-you should manually edit the published migration to use your custom table name.
-
-After the migration has been published you can create the role- and permission-tables by
-running the migrations:
-
-```bash
-php artisan migrate
-```
-
-You can publish the config-file with:
-```bash
-php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider" --tag="config"
-```
-
-This is the contents of the published config file:
-
-```php
-return [
-
-    /*
-    |--------------------------------------------------------------------------
-    | Authorization Models
-    |--------------------------------------------------------------------------
-    */
-
-    'models' => [
-
-        /*
-        |--------------------------------------------------------------------------
-        | Permission Model
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | Eloquent model should be used to retrieve your permissions. Of course, it
-        | is often just the "Permission" model but you may use whatever you like.
-        |
-        | The model you want to use as a Permission model needs to implement the
-        | `Spatie\Permission\Contracts\Permission` contract.
-        |
-        */
-
-        'permission' => Spatie\Permission\Models\Permission::class,
-
-        /*
-        |--------------------------------------------------------------------------
-        | Role Model
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | Eloquent model should be used to retrieve your roles. Of course, it
-        | is often just the "Role" model but you may use whatever you like.
-        |
-        | The model you want to use as a Role model needs to implement the
-        | `Spatie\Permission\Contracts\Role` contract.
-        |
-        */
-
-        'role' => Spatie\Permission\Models\Role::class,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Authorization Tables
-    |--------------------------------------------------------------------------
-    */
-
-    'table_names' => [
-
-        /*
-        |--------------------------------------------------------------------------
-        | Roles Table
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | table should be used to retrieve your roles. We have chosen a basic
-        | default value but you may easily change it to any table you like.
-        |
-        */
-
-        'roles' => 'roles',
-
-        /*
-        |--------------------------------------------------------------------------
-        | Permissions Table
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | table should be used to retrieve your permissions. We have chosen a basic
-        | default value but you may easily change it to any table you like.
-        |
-        */
-
-        'permissions' => 'permissions',
-
-        /*
-        |--------------------------------------------------------------------------
-        | User Permissions Table
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | table should be used to retrieve your users permissions. We have chosen a
-        | basic default value but you may easily change it to any table you like.
-        |
-        */
-
-        'user_has_permissions' => 'user_has_permissions',
-
-        /*
-        |--------------------------------------------------------------------------
-        | User Roles Table
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | table should be used to retrieve your users roles. We have chosen a
-        | basic default value but you may easily change it to any table you like.
-        |
-        */
-
-        'user_has_roles' => 'user_has_roles',
-
-        /*
-        |--------------------------------------------------------------------------
-        | Role Permissions Table
-        |--------------------------------------------------------------------------
-        |
-        | When using the "HasRoles" trait from this package, we need to know which
-        | table should be used to retrieve your roles permissions. We have chosen a
-        | basic default value but you may easily change it to any table you like.
-        |
-        */
-
-        'role_has_permissions' => 'role_has_permissions',
-
-    ],
-
-];
-```
-
-## Usage
-
-First add the `Spatie\Permission\Traits\HasRoles`-trait to your User model.
-
-```php
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Spatie\Permission\Traits\HasRoles;
-
-class User extends Authenticatable
-{
-    use HasRoles;
-    
-    // ...
-}
-```
-
-This package allows for users to be associated with roles. Permissions can be associated with roles.
-A `Role` and a `Permission` are regular Eloquent-models. They can have a name and can be created like this:
-
-```php
-use Spatie\Permission\Models\Role;
-use Spatie\Permission\Models\Permission;
-
-$role = Role::create(['name' => 'writer']);
-$permission = Permission::create(['name' => 'edit articles']);
-```
-
-The `HasRoles` adds eloquent relationships to your models, which can be accessed directly or used as a base query.
-
-```php
-$permissions = $user->permissions;
-$roles = $user->roles()->pluck('name');
-```
-
-###Using permissions
-A permission can be given to a user:
-
-```php
-$user->givePermissionTo('edit articles');
-```
-
-A permission can be revoked from a user:
-
-```php
-$user->revokePermissionTo('edit articles');
-```
-
-You can test if a user has a permission:
-```php
-$user->hasPermissionTo('edit articles');
-```
-
-Saved permissions will be registered with the `Illuminate\Auth\Access\Gate`-class. So you can
-test if a user has a permission with Laravel's default `can`-function.
-```php
-$user->can('edit articles');
-```
-
-###Using roles and permissions
-A role can be assigned to a user:
-
-```php
-$user->assignRole('writer');
-```
-
-A role can be removed from a user:
-
-```php
-$user->removeRole('writer');
-```
-You can determine if a user has a certain role:
-
-```php
-$user->hasRole('writer');
-```
-
-You can also determine if a user has any of a given list of roles:
-```php
-$user->hasAnyRole(Role::all());
-```
-You can also determine if a user has all of a given list of roles:
-
-```php
-$user->hasAllRoles(Role::all());
-```
-
-The `assignRole`, `hasRole`, `hasAnyRole`, `hasAllRoles`  and `removeRole`-functions can accept a
- string, a `Spatie\Permission\Models\Role`-object or an `\Illuminate\Support\Collection`-object.
-
-A permission can be given to a role:
-
-```php
-$role->givePermissionTo('edit articles');
-```
-
-A permission can be revoked from a role:
-
-```php
-$role->revokePermissionTo('edit articles');
-```
-
-The `givePermissionTo` and `revokePermissionTo`-functions can accept a 
-string or a `Spatie\Permission\Models\Permission`-object.
-
-Saved permission and roles are also registered with the `Illuminate\Auth\Access\Gate`-class.
-```php
-$user->can('edit articles');
-```
-
-###Using blade directives
-This package also adds Blade directives to verify whether the
-currently logged in user has all or any of a given list of roles.
-
-```php
-@role('writer')
-I'm a writer!
-@else
-I'm not a writer...
-@endrole
-```
-
-```php
-@hasrole('writer')
-I'm a writer!
-@else
-I'm not a writer...
-@endhasrole
-```
-
-```php
-@hasanyrole(Role::all())
-I have one or more of these roles!
-@else
-I have none of these roles...
-@endhasanyrole
-```
-
-```php
-@hasallroles(Role::all())
-I have all of these roles!
-@else
-I don't have all of these roles...
-@endhasallroles
-```
-
-## Extending
-
-If you need to extend or replace the existing `Role` or `Permission` models you just need to 
-keep the following things in mind:
-
-- Your `Role` model needs to implement the `Spatie\Permission\Contracts\Role` contract
-- Your `Permission` model needs to implement the `Spatie\Permission\Contracts\Permission` contract
-- You must publish the configuration with this command: `php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider" --tag="config"` and update the `models.role` and `models.permission` values
-
-## Change log
+### Changelog
 
 Please see [CHANGELOG](CHANGELOG.md) for more information what has changed recently.
 
-## Testing
-
-``` bash
-$ composer test
-```
-
 ## Contributing
 
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
+Please see [CONTRIBUTING](https://github.com/spatie/.github/blob/main/CONTRIBUTING.md) for details.
 
-## Security
+### Security
 
-If you discover any security related issues, please email [freek@spatie.be](mailto:freek@spatie.be) instead of using the issue tracker.
+If you discover any security-related issues, please email [security@spatie.be](mailto:security@spatie.be) instead of using the issue tracker.
+
+## Postcardware
+
+You're free to use this package, but if it makes it to your production environment we highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using.
+
+Our address is: Spatie, Kruikstraat 22, 2018 Antwerp, Belgium.
+
+We publish all received postcards [on our company website](https://spatie.be/en/opensource/postcards).
 
 ## Credits
 
+- [Chris Brown](https://github.com/drbyte)
 - [Freek Van der Herten](https://github.com/freekmurze)
 - [All Contributors](../../contributors)
 
-This package is heavily based on [Jeffrey Way](https://twitter.com/jeffrey_way)'s awesome [Laracasts](https://laracasts.com)-lesson
-on [roles and permissions](https://laracasts.com/series/whats-new-in-laravel-5-1/episodes/16). His original code
+This package is heavily based on [Jeffrey Way](https://twitter.com/jeffrey_way)'s awesome [Laracasts](https://laracasts.com) lessons
+on [permissions and roles](https://laracasts.com/series/whats-new-in-laravel-5-1/episodes/16). His original code
 can be found [in this repo on GitHub](https://github.com/laracasts/laravel-5-roles-and-permissions-demo).
+
+Special thanks to [Alex Vanderbist](https://github.com/AlexVanderbist) who greatly helped with `v2`, and to [Chris Brown](https://github.com/drbyte) for his longtime support  helping us maintain the package.
+
+And a special thanks to [Caneco](https://twitter.com/caneco) for the logo ✨
 
 ## Alternatives
 
-- [BeatSwitch/lock-laravel](https://github.com/BeatSwitch/lock-laravel)
-- [Zizaco/entrust](https://github.com/Zizaco/entrust)
-- [JosephSilber/bouncer](https://github.com/JosephSilber/bouncer)
-
-## About Spatie
-Spatie is webdesign agency in Antwerp, Belgium. You'll find an overview of all our open source projects [on our website](https://spatie.be/opensource).
+- [Povilas Korop](https://twitter.com/@povilaskorop) did an excellent job listing the alternatives [in an article on Laravel News](https://laravel-news.com/two-best-roles-permissions-packages). In that same article, he compares laravel-permission to [Joseph Silber](https://github.com/JosephSilber)'s [Bouncer]((https://github.com/JosephSilber/bouncer)), which in our book is also an excellent package.
+- [ultraware/roles](https://github.com/ultraware/roles) takes a slightly different approach to its features.
+- [santigarcor/laratrust](https://github.com/santigarcor/laratrust) implements team support
+- [zizaco/entrust](https://github.com/zizaco/entrust) offers some wildcard pattern matching
 
 ## License
 

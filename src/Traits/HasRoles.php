@@ -2,193 +2,352 @@
 
 namespace Spatie\Permission\Traits;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Spatie\Permission\Contracts\Permission;
 use Spatie\Permission\Contracts\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 trait HasRoles
 {
     use HasPermissions;
-    use RefreshesPermissionCache;
+
+    /** @var string */
+    private $roleClass;
+
+    public static function bootHasRoles()
+    {
+        static::deleting(function ($model) {
+            if (method_exists($model, 'isForceDeleting') && ! $model->isForceDeleting()) {
+                return;
+            }
+
+            $model->roles()->detach();
+        });
+    }
+
+    public function getRoleClass()
+    {
+        if (! isset($this->roleClass)) {
+            $this->roleClass = app(PermissionRegistrar::class)->getRoleClass();
+        }
+
+        return $this->roleClass;
+    }
 
     /**
-     * A user may have multiple roles.
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
+     * A model may have multiple roles.
      */
-    public function roles()
+    public function roles(): BelongsToMany
     {
-        return $this->belongsToMany(
-            config('laravel-permission.models.role'),
-            config('laravel-permission.table_names.user_has_roles')
+        $relation = $this->morphToMany(
+            config('permission.models.role'),
+            'model',
+            config('permission.table_names.model_has_roles'),
+            config('permission.column_names.model_morph_key'),
+            PermissionRegistrar::$pivotRole
         );
+
+        if (! PermissionRegistrar::$teams) {
+            return $relation;
+        }
+
+        return $relation->wherePivot(PermissionRegistrar::$teamsKey, getPermissionsTeamId())
+            ->where(function ($q) {
+                $teamField = config('permission.table_names.roles').'.'.PermissionRegistrar::$teamsKey;
+                $q->whereNull($teamField)->orWhere($teamField, getPermissionsTeamId());
+            });
     }
 
     /**
-     * A user may have multiple direct permissions.
+     * Scope the model query to certain roles only.
      *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param string|int|array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection $roles
+     * @param string $guard
+     *
+     * @return \Illuminate\Database\Eloquent\Builder
      */
-    public function permissions()
+    public function scopeRole(Builder $query, $roles, $guard = null): Builder
     {
-        return $this->belongsToMany(
-            config('laravel-permission.models.permission'),
-            config('laravel-permission.table_names.user_has_permissions')
-        );
+        if ($roles instanceof Collection) {
+            $roles = $roles->all();
+        }
+
+        $roles = array_map(function ($role) use ($guard) {
+            if ($role instanceof Role) {
+                return $role;
+            }
+
+            $method = is_numeric($role) ? 'findById' : 'findByName';
+
+            return $this->getRoleClass()->{$method}($role, $guard ?: $this->getDefaultGuardName());
+        }, Arr::wrap($roles));
+
+        return $query->whereHas('roles', function (Builder $subQuery) use ($roles) {
+            $roleClass = $this->getRoleClass();
+            $key = (new $roleClass())->getKeyName();
+            $subQuery->whereIn(config('permission.table_names.roles').".$key", \array_column($roles, $key));
+        });
     }
 
     /**
-     * Assign the given role to the user.
+     * Assign the given role to the model.
      *
-     * @param string|Role $role
+     * @param array|string|int|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection ...$roles
      *
-     * @return Role
+     * @return $this
      */
-    public function assignRole($role)
+    public function assignRole(...$roles)
     {
-        $this->roles()->save($this->getStoredRole($role));
+        $roles = collect($roles)
+            ->flatten()
+            ->reduce(function ($array, $role) {
+                if (empty($role)) {
+                    return $array;
+                }
+
+                $role = $this->getStoredRole($role);
+                if (! $role instanceof Role) {
+                    return $array;
+                }
+
+                $this->ensureModelSharesGuard($role);
+
+                $array[$role->getKey()] = PermissionRegistrar::$teams && ! is_a($this, Permission::class) ?
+                    [PermissionRegistrar::$teamsKey => getPermissionsTeamId()] : [];
+
+                return $array;
+            }, []);
+
+        $model = $this->getModel();
+
+        if ($model->exists) {
+            $this->roles()->sync($roles, false);
+            $model->load('roles');
+        } else {
+            $class = \get_class($model);
+
+            $class::saved(
+                function ($object) use ($roles, $model) {
+                    if ($model->getKey() != $object->getKey()) {
+                        return;
+                    }
+                    $model->roles()->sync($roles, false);
+                    $model->load('roles');
+                }
+            );
+        }
+
+        if (is_a($this, get_class($this->getPermissionClass()))) {
+            $this->forgetCachedPermissions();
+        }
+
+        return $this;
     }
 
     /**
-     * Revoke the given role from the user.
+     * Revoke the given role from the model.
      *
-     * @param string|Role $role
-     *
-     * @return mixed
+     * @param string|int|\Spatie\Permission\Contracts\Role $role
      */
     public function removeRole($role)
     {
         $this->roles()->detach($this->getStoredRole($role));
+
+        $this->load('roles');
+
+        if (is_a($this, get_class($this->getPermissionClass()))) {
+            $this->forgetCachedPermissions();
+        }
+
+        return $this;
     }
 
     /**
-     * Determine if the user has (one of) the given role(s).
+     * Remove all current roles and set the given ones.
      *
-     * @param string|Role|\Illuminate\Support\Collection $roles
+     * @param  array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection|string|int  ...$roles
      *
+     * @return $this
+     */
+    public function syncRoles(...$roles)
+    {
+        $this->roles()->detach();
+
+        return $this->assignRole($roles);
+    }
+
+    /**
+     * Determine if the model has (one of) the given role(s).
+     *
+     * @param string|int|array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection $roles
+     * @param string|null $guard
      * @return bool
      */
-    public function hasRole($roles)
+    public function hasRole($roles, string $guard = null): bool
     {
+        if (is_string($roles) && false !== strpos($roles, '|')) {
+            $roles = $this->convertPipeToArray($roles);
+        }
+
         if (is_string($roles)) {
-            return $this->roles->contains('name', $roles);
+            return $guard
+                ? $this->roles->where('guard_name', $guard)->contains('name', $roles)
+                : $this->roles->contains('name', $roles);
+        }
+
+        if (is_int($roles)) {
+            $roleClass = $this->getRoleClass();
+            $key = (new $roleClass())->getKeyName();
+
+            return $guard
+                ? $this->roles->where('guard_name', $guard)->contains($key, $roles)
+                : $this->roles->contains($key, $roles);
         }
 
         if ($roles instanceof Role) {
-            return $this->roles->contains('id', $roles->id);
+            return $this->roles->contains($roles->getKeyName(), $roles->getKey());
         }
 
-        return (bool) $roles->intersect($this->roles)->count();
+        if (is_array($roles)) {
+            foreach ($roles as $role) {
+                if ($this->hasRole($role, $guard)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return $roles->intersect($guard ? $this->roles->where('guard_name', $guard) : $this->roles)->isNotEmpty();
     }
 
     /**
-     * Determine if the user has any of the given role(s).
+     * Determine if the model has any of the given role(s).
      *
-     * @param string|Role|\Illuminate\Support\Collection $roles
+     * Alias to hasRole() but without Guard controls
+     *
+     * @param string|int|array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection $roles
      *
      * @return bool
      */
-    public function hasAnyRole($roles)
+    public function hasAnyRole(...$roles): bool
     {
         return $this->hasRole($roles);
     }
 
     /**
-     * Determine if the user has all of the given role(s).
+     * Determine if the model has all of the given role(s).
      *
-     * @param string|Role|\Illuminate\Support\Collection $roles
-     *
+     * @param  string|array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection  $roles
+     * @param  string|null  $guard
      * @return bool
      */
-    public function hasAllRoles($roles)
+    public function hasAllRoles($roles, string $guard = null): bool
     {
+        if (is_string($roles) && false !== strpos($roles, '|')) {
+            $roles = $this->convertPipeToArray($roles);
+        }
+
         if (is_string($roles)) {
-            return $this->roles->contains('name', $roles);
+            return $guard
+                ? $this->roles->where('guard_name', $guard)->contains('name', $roles)
+                : $this->roles->contains('name', $roles);
         }
 
         if ($roles instanceof Role) {
-            return $this->roles->contains('id', $roles->id);
+            return $this->roles->contains($roles->getKeyName(), $roles->getKey());
         }
 
         $roles = collect()->make($roles)->map(function ($role) {
             return $role instanceof Role ? $role->name : $role;
         });
 
-        return $roles->intersect($this->roles->lists('name')) == $roles;
+        return $roles->intersect(
+            $guard
+                ? $this->roles->where('guard_name', $guard)->pluck('name')
+                : $this->getRoleNames()
+        ) == $roles;
     }
 
     /**
-     * Determine if the user may perform the given permission.
+     * Determine if the model has exactly all of the given role(s).
      *
-     * @param string|Permission $permission
-     *
+     * @param  string|array|\Spatie\Permission\Contracts\Role|\Illuminate\Support\Collection  $roles
+     * @param  string|null  $guard
      * @return bool
      */
-    public function hasPermissionTo($permission)
+    public function hasExactRoles($roles, string $guard = null): bool
     {
-        if (is_string($permission)) {
-            $permission = app(Permission::class)->findByName($permission);
+        if (is_string($roles) && false !== strpos($roles, '|')) {
+            $roles = $this->convertPipeToArray($roles);
         }
 
-        return $this->hasDirectPermission($permission) || $this->hasPermissionViaRole($permission);
-    }
-
-    /**
-     * @deprecated deprecated since version 1.0.1, use hasPermissionTo instead
-     *
-     * Determine if the user may perform the given permission.
-     *
-     * @param Permission $permission
-     *
-     * @return bool
-     */
-    public function hasPermission($permission)
-    {
-        return $this->hasPermissionTo($permission);
-    }
-
-    /**
-     * Determine if the user has, via roles, has the given permission.
-     *
-     * @param Permission $permission
-     *
-     * @return bool
-     */
-    protected function hasPermissionViaRole(Permission $permission)
-    {
-        return $this->hasRole($permission->roles);
-    }
-
-    /**
-     * Determine if the user has has the given permission.
-     *
-     * @param string|Permission $permission
-     *
-     * @return bool
-     */
-    protected function hasDirectPermission($permission)
-    {
-        if (is_string($permission)) {
-            $permission = app(Permission::class)->findByName($permission);
-
-            if (!$permission) {
-                return false;
-            }
+        if (is_string($roles)) {
+            $roles = [$roles];
         }
 
-        return $this->permissions->contains('id', $permission->id);
+        if ($roles instanceof Role) {
+            $roles = [$roles->name];
+        }
+
+        $roles = collect()->make($roles)->map(function ($role) {
+            return $role instanceof Role ? $role->name : $role;
+        });
+
+        return $this->roles->count() == $roles->count() && $this->hasAllRoles($roles, $guard);
     }
 
     /**
-     * @param $role
-     *
-     * @return Role
+     * Return all permissions directly coupled to the model.
      */
-    protected function getStoredRole($role)
+    public function getDirectPermissions(): Collection
     {
+        return $this->permissions;
+    }
+
+    public function getRoleNames(): Collection
+    {
+        return $this->roles->pluck('name');
+    }
+
+    protected function getStoredRole($role): Role
+    {
+        $roleClass = $this->getRoleClass();
+
+        if (is_numeric($role)) {
+            return $roleClass->findById($role, $this->getDefaultGuardName());
+        }
+
         if (is_string($role)) {
-            return app(Role::class)->findByName($role);
+            return $roleClass->findByName($role, $this->getDefaultGuardName());
         }
 
         return $role;
+    }
+
+    protected function convertPipeToArray(string $pipeString)
+    {
+        $pipeString = trim($pipeString);
+
+        if (strlen($pipeString) <= 2) {
+            return $pipeString;
+        }
+
+        $quoteCharacter = substr($pipeString, 0, 1);
+        $endCharacter = substr($quoteCharacter, -1, 1);
+
+        if ($quoteCharacter !== $endCharacter) {
+            return explode('|', $pipeString);
+        }
+
+        if (! in_array($quoteCharacter, ["'", '"'])) {
+            return explode('|', $pipeString);
+        }
+
+        return explode('|', trim($pipeString, $quoteCharacter));
     }
 }

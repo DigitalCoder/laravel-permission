@@ -1,5 +1,8 @@
 build
 composer.lock
-docs
 vendor
 tests/temp
+.idea
+.phpunit.result.cache
+.php-cs-fixer.cache
+tests/CreatePermissionCustomTables.php
